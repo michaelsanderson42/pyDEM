@@ -15,7 +15,7 @@
 """
 
 from numpy.linalg import inv
-from traits.api import *
+# from traits.api import *
 import numpy as np
 import gdal
 import gdalconst
@@ -217,8 +217,8 @@ class GridCoordinates(HasStrictTraits):
         "-180.000_0.250_0.000_90.000_0.000_-0.251_512_612_2013-05-21_12_32_52.945000"
         """
 
-        unique_str = "_".join(["%.3f" % f for f in self.geotransform] +
-                              ["%d" % d for d in self.x_size, self.y_size]
+        unique_str = "_".join(["{:.3f}".format(f) for f in self.geotransform] +
+                              ["{:d}".format(d) for d in [self.x_size, self.y_size]]
                               )
         if self.date is not None:
             unique_str += '_' + str(self.date)
