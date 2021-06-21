@@ -16,7 +16,7 @@
 """
 if __name__ == "__main__":
     import os
-    from pydem.processing_manager import ProcessManager
+    from pyDEM.pydem.processing_manager import ProcessManager
     path = r'testtiff'
 
     # Make at least one test file

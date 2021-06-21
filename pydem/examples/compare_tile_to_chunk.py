@@ -15,9 +15,9 @@
    limitations under the License.
 """
 if __name__ == "__main__":
-    from pydem.test_pydem import get_test_data
-    from pydem.dem_processing import DEMProcessor
-    from pydem.test_pydem import make_file_names
+    from pyDEM.pydem.test_pydem import get_test_data
+    from pyDEM.pydem.dem_processing import DEMProcessor
+    from pyDEM.pydem.test_pydem import make_file_names
 
 
     import sys

@@ -20,11 +20,11 @@ if __name__ == "__main__":
     import os
     import numpy as np
 
-    from pydem.test_pydem import get_test_data
-    from pydem.dem_processing import DEMProcessor
-    from pydem.test_pydem import make_file_names
-    from pydem.reader.gdal_reader import GdalReader
-    from pydem.taudem import taudem
+    from pyDEM.pydem.test_pydem import get_test_data
+    from pyDEM.pydem.dem_processing import DEMProcessor
+    from pyDEM.pydem.test_pydem import make_file_names
+    from pyDEM.pydem.reader.gdal_reader import GdalReader
+    from pyDEM.pydem.taudem import taudem
 
     # Set up argument parsing for command-line usage of this script
     parser = argparse.ArgumentParser(

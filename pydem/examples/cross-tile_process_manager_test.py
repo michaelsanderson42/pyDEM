@@ -19,8 +19,8 @@ if __name__ == "__main__":
     import numpy as np
     import os
 
-    from pydem.processing_manager import ProcessManager
-    from pydem.test_pydem import make_test_files, mk_test_multifile
+    from pyDEM.pydem.processing_manager import ProcessManager
+    from pyDEM.pydem.test_pydem import make_test_files, mk_test_multifile
 
 
     #%% Make the test case files
