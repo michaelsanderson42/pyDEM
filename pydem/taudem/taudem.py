@@ -19,15 +19,15 @@ import platform
 import os
 
 cmd_prefix = '"' + os.path.abspath(os.path.join(os.path.split(__file__)[0],
-              "./taudem_%s/" % (platform.uname()[0]))) + '/"'
+              "./taudem_{}/".format(platform.uname()[0]))) + '/"'
 
 def _run(cmd,):
     ccmd = (cmd_prefix + cmd)
-    print "<<  %s   >>" % ccmd
+    print(f"<<  {ccmd}   >>")
     p = subprocess.Popen(ccmd, stdout=subprocess.PIPE, shell=True)
     for line in p.stdout:
-        print line
+        print(line)
     p.wait()
-    print p.returncode
+    print(p.returncode)
     if p.returncode:
         raise Exception("Taudem did not complete. Is it installed properly?")
