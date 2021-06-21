@@ -63,23 +63,19 @@ Created on Wed Jun 18 14:19:04 2014
 import warnings
 import gc
 import numpy as np
-
-
 import os
 import subprocess
+import iris
 import scipy.sparse as sps
 import scipy.ndimage as spndi
 
-from reader.gdal_reader import GdalReader, InputRasterDataLayer
-from reader.my_types import grid_coords_from_corners, Point
-from taudem import taudem
-from test_pydem import get_test_data, make_file_names
-from utils import (mk_dx_dy_from_geotif_layer, get_fn,
+from pyDEM.pydem.taudem import taudem
+from pyDEM.pydem.utils import (mk_dx_dy_from_latlon, get_fn,
                    make_slice, is_edge, grow_obj, find_centroid, get_distance,
                    get_border_index, get_border_mask, get_adjacent_index)
 
 try:
-    from cyfuncs import cyutils
+    from pyDEM.pydem.cyfuncs import cyutils
     CYTHON = True
 except:
     CYTHON = False
@@ -197,8 +193,8 @@ class TileEdge(object):
         self.percent_done = np.zeros(left.shape, 'float64')
         self.n_todo = np.zeros(left.shape, 'int64')
         max_elev = np.zeros(left.shape, 'float64')
-        for tb in xrange(top_edge.size):
-            for lr in xrange(left_edge.size):
+        for tb in list(range(top_edge.size)):
+            for lr in list(range(left_edge.size)):
                 te = top_edge[tb]
                 be = bottom_edge[tb]
                 le = left_edge[lr]
@@ -307,7 +303,7 @@ class TileEdge(object):
             i += self.n_cols
             found = True
         if not found:
-            print "Side '%s' not found" % neighbor_side
+            print("Side '%s' not found" % neighbor_side)
         # Check if i is in range
         if i < 0 or i >= self.n_chunks:
             return None
@@ -337,7 +333,7 @@ class TileEdge(object):
         right = self.right
         top = self.top
         bottom = self.bottom
-        for i in xrange(self.n_chunks):
+        for i in list(range(self.n_chunks)):
             self.n_todo.ravel()[i] = np.sum([left.ravel()[i].n_todo,
                                             right.ravel()[i].n_todo,
                                             top.ravel()[i].n_todo,
@@ -352,7 +348,7 @@ class TileEdge(object):
         right = self.right
         top = self.top
         bottom = self.bottom
-        for i in xrange(self.n_chunks):
+        for i in list(range(self.n_chunks)):
             self.n_done.ravel()[i] = np.sum([left.ravel()[i].n_done,
                                             right.ravel()[i].n_done,
                                             top.ravel()[i].n_done,
@@ -367,7 +363,7 @@ class TileEdge(object):
         right = self.right
         top = self.top
         bottom = self.bottom
-        for i in xrange(self.n_chunks):
+        for i in list(range(self.n_chunks)):
             self.percent_done.ravel()[i] = \
                 np.sum([left.ravel()[i].percent_done,
                         right.ravel()[i].percent_done,
@@ -385,7 +381,7 @@ class TileEdge(object):
         the edges.
         """
         self.fix_shapes()
-        for i in xrange(self.n_chunks):
+        for i in list(range(self.n_chunks)):
             for side in ['left', 'right', 'top', 'bottom']:
                 edge = getattr(self, side).ravel()[i]
                 if add:
@@ -402,7 +398,7 @@ class TileEdge(object):
         Fixes the shape of the data fields on edges. Left edges should be
         column vectors, and top edges should be row vectors, for example.
         """
-        for i in xrange(self.n_chunks):
+        for i in list(range(self.n_chunks)):
             for side in ['left', 'right', 'top', 'bottom']:
                 edge = getattr(self, side).ravel()[i]
                 if side in ['left', 'right']:
@@ -561,12 +557,11 @@ class DEMProcessor(object):
         """
         # %%
         if isinstance(file_name, str) and os.path.exists(file_name):
-            elev_file = GdalReader(file_name=file_name)
-            elev, = elev_file.raster_layers
-            data = elev.raster_data
-
-            self.elev = elev
-            self.data = data
+# Load in the data from a file.
+            elev = iris.load_cube(file_name)
+            self.xcoords = elev.coord('longitude').points
+            self.ycoords = elev.coord('latitude').points
+            self.data = elev.data.copy()
             try:  # if masked array
                 self.data.mask[(np.isnan(self.data))
                                | (self.data < -9998)] = True
@@ -575,27 +570,21 @@ class DEMProcessor(object):
                 self.data = np.ma.masked_array(self.data,
                                                mask=(np.isnan(self.data))
                                                | (self.data < -9998))
-            del elev_file  # close the file
             self.file_name = file_name
-        elif isinstance(file_name, np.ndarray): #elevation data given directly
+
+        elif isinstance(file_name, np.ndarray): # elevation data given without coordinates
             self.data = file_name
             dX = np.ones(self.data.shape[0] - 1) / self.data.shape[1]  #dX only changes in latitude
             dY = np.ones(self.data.shape[0] - 1) / self.data.shape[0]
-            # Need to spoof elev
-            elev = InputRasterDataLayer()
-            ulc = Point(lat=1, lon=0)
-            lrc = Point(lat=0, lon=1)
-            elev.grid_coordinates = grid_coords_from_corners(ulc, lrc, self.data.shape)
-            self.elev = elev
-        elif isinstance(file_name, tuple): #elevation data given directly
+# Set up the coordinates, where (1, 0) is the edge of the top left corner and (0, 1) is the edge of the lower right corner
+            self.xcoords = np.linspace(0, 1-dX[0], data.shape[1]) + dX[0]/2
+            self.ycoords = np.linspace(0, 1-dY[0], data.shape[0]) + dY[0]/2
+
+        elif isinstance(file_name, tuple): # elevation data and coordinates given directly
             self.data, lat, lon = file_name
-            # Need to spoof elev
-            elev = InputRasterDataLayer()
-            ulc = Point(lat=np.nanmax(lat), lon=np.nanmin(lon))
-            lrc = Point(lat=np.nanmin(lat), lon=np.nanmax(lon))
-            elev.grid_coordinates = grid_coords_from_corners(ulc, lrc, self.data.shape)
-            dX, dY = mk_dx_dy_from_geotif_layer(elev)
-            self.elev = elev
+            self.xcoords = lon
+            self.ycoords = lat
+            dX, dY = mk_dx_dy_from_latlon(lat, lon)
 
         shp = np.array(self.data.shape) - 1
         if isinstance(file_name, str) and dx_dy_from_file == 'test':  # This is a hidden option for dev/test
@@ -603,7 +592,7 @@ class DEMProcessor(object):
             dY = np.linspace(0.9, 0.9, data.shape[0] - 1)
             dX = np.ones((data.shape[0] - 1), 'float64') / TEST_DIV
         elif isinstance(file_name, str) and dx_dy_from_file:
-            dX, dY = mk_dx_dy_from_geotif_layer(elev)
+            dX, dY = mk_dx_dy_from_latlon(self.ycoords, self.xcoords)
 
             if plotflag:
                 from matplotlib.pyplot import plot, gca
@@ -677,7 +666,7 @@ class DEMProcessor(object):
             else:
                 cmd = "gdalwarp -multi -wm 2000 -co BIGTIFF=YES -of GTiff -co compress=lzw -co TILED=YES -wo OPTIMIZE_SIZE=YES -r near -t_srs %s %s %s" \
                     % (self.save_projection, tmp_file, fnl_file)
-            print "<<"*4, cmd, ">>"*4
+            print("<<"*4, cmd, ">>"*4)
             subprocess.call(cmd)
             os.remove(tmp_file)
         else:
@@ -728,8 +717,8 @@ class DEMProcessor(object):
             array = np.load(fn + '.npz')
             try:
                 setattr(self, name, array['arr_0'])
-            except Exception, e:
-                print e
+            except Exception as e:
+                print(e)
             finally:
                 array.close()
 
@@ -966,9 +955,9 @@ class DEMProcessor(object):
         # Tarboton http://www.neng.usu.edu/cee/faculty/dtarb/96wr03137.pdf
         if self.data.shape[0] <= self.chunk_size_slp_dir and \
                 self.data.shape[1] <= self.chunk_size_slp_dir:
-            print "starting slope/direction calculation"
+            print("starting slope/direction calculation")
             self.mag, self.direction = self._slopes_directions(
-                self.data, self.dX, self.dY, 'tarboton')
+                self.data, self.dX, self.dY, method='tarboton')
             # Find the flat regions. This is mostly simple (look for mag < 0),
             # but the downstream pixel at the edge of a flat will have a
             # calcuable angle which will not be accurate. We have to also find
@@ -991,8 +980,8 @@ class DEMProcessor(object):
             count = 1
             for te, be in zip(top_edge, bottom_edge):
                 for le, re in zip(left_edge, right_edge):
-                    print "starting slope/direction calculation for chunk", \
-                        count, "[%d:%d, %d:%d]" % (te, be, le, re)
+                    print("starting slope/direction calculation for chunk", \
+                        count, "[%d:%d, %d:%d]" % (te, be, le, re))
                     count += 1
                     mag, direction = \
                         self._slopes_directions(self.data[te:be, le:re],
@@ -1078,6 +1067,98 @@ class DEMProcessor(object):
         flat = f.reshape(data.shape)
         return flat
 
+
+    def calc_connectivity_matrix(self, plotflag=False, edge_init_data=None, uca_init=None):
+        """
+        Calculates the connectivity matrix.
+
+        Parameters
+        ----------
+        plotflag : bool, optional
+            Default False. If true will plot debugging plots. For large files,
+            this will be very slow
+        edge_init_data : list, optional
+            edge_init_data = [uca_data, done_data, todo_data]
+            uca_data : dict
+                Dictionary with 'left', 'right', 'top', 'bottom' keys that
+                gives the arrays filled with uca data on the edge corresponding
+                to the key
+            done_data : dict
+                As uca_data, but bool array indicating if neighboring tiles
+                have computed a finished value for that edge pixel
+            todo_data : dict
+                As uca_data, but bool array indicating if edges on tile still
+                have to be computed
+        uca_init : array, optional
+            Array with pre-computed upstream contributing area
+            (without edge contributions)
+
+        Notes
+        -------
+        if edge_init_data is given, then the initialized area will be modified
+        such that the edges are equal to the edge_init_data.
+
+        If uca_init is given, then the interior of the upstream area will not
+        be calculated. Only the information from the edges will be updated.
+        Unless the tile is too large so that the calculation is chunked. In
+        that case, the whole tile is re-computed.
+        """
+        if self.direction is None:
+            self.calc_slopes_directions()
+
+        # Initialize the upstream area
+        uca_edge_init = np.zeros(self.data.shape, 'float64')
+        uca_edge_done = np.zeros(self.data.shape, bool)
+        uca_edge_todo = np.zeros(self.data.shape, bool)
+        edge_init_done, edge_init_todo = None, None
+        if edge_init_data is not None:
+            edge_init_data, edge_init_done, edge_init_todo = edge_init_data
+            slices = {'left': [slice(None), slice(0, 1)],
+                      'right': [slice(None), slice(-1, None)],
+                      'top': [slice(0, 1), slice(None)],
+                      'bottom': [slice(-1, None), slice(None)]}
+            for key, val in slices.items():
+                # To initialize and edge it needs to have data and be finished
+                uca_edge_done[val] += \
+                    edge_init_done[key].reshape(uca_edge_init[val].shape)
+                uca_edge_init[val] = \
+                    edge_init_data[key].reshape(uca_edge_init[val].shape)
+                uca_edge_init[val][~uca_edge_done[val]] = 0
+                uca_edge_todo[val] += \
+                    edge_init_todo[key].reshape(uca_edge_init[val].shape)
+
+        if uca_init is None:
+            self.uca = np.full(self.data.shape, FLAT_ID_INT, 'float64')
+        else:
+            self.uca = uca_init.astype('float64')
+
+#       if self.data.shape[0] <= self.chunk_size_uca and \
+#               self.data.shape[1] <= self.chunk_size_uca:
+#           if uca_init is None:
+        print("Starting uca calculation")
+        A = self._calc_connectivity_chunk(self.data, self.dX, self.dY,
+                                           self.direction, self.mag,
+                                           self.flats,
+                                           area_edges=uca_edge_init,
+                                           plotflag=plotflag)
+#           else:
+#               print("Starting edge resolution round: ", end=' ')
+#               # last return value will be None: edge_
+#               area, e2doi, edone, _ = \
+#                   self._calc_uca_chunk_update(self.data, self.dX, self.dY,
+#                                               self.direction, self.mag,
+#                                               self.flats,
+#                                               area_edges=uca_edge_init,
+#                                               edge_todo=uca_edge_todo,
+#                                               edge_done=uca_edge_done)
+#               self.uca += area
+#               self.edge_todo = e2doi
+#               self.edge_done = edone
+
+        gc.collect()  # Just in case
+        return A
+
+
     def calc_uca(self, plotflag=False, edge_init_data=None, uca_init=None):
         """Calculates the upstream contributing area.
 
@@ -1126,7 +1207,7 @@ class DEMProcessor(object):
                       'right': [slice(None), slice(-1, None)],
                       'top': [slice(0, 1), slice(None)],
                       'bottom': [slice(-1, None), slice(None)]}
-            for key, val in slices.iteritems():
+            for key, val in slices.items():
                 # To initialize and edge it needs to have data and be finished
                 uca_edge_done[val] += \
                     edge_init_done[key].reshape(uca_edge_init[val].shape)
@@ -1144,7 +1225,7 @@ class DEMProcessor(object):
         if self.data.shape[0] <= self.chunk_size_uca and \
                 self.data.shape[1] <= self.chunk_size_uca:
             if uca_init is None:
-                print "Starting uca calculation"
+                print("Starting uca calculation")
                 res = self._calc_uca_chunk(self.data, self.dX, self.dY,
                                            self.direction, self.mag,
                                            self.flats,
@@ -1154,7 +1235,7 @@ class DEMProcessor(object):
                 self.edge_done = res[2]
                 self.uca = res[0]
             else:
-                print "Starting edge resolution round: ",
+                print("Starting edge resolution round: ", end=' ')
                 # last return value will be None: edge_
                 area, e2doi, edone, _ = \
                     self._calc_uca_chunk_update(self.data, self.dX, self.dY,
@@ -1184,8 +1265,11 @@ class DEMProcessor(object):
 
             tile_edge = TileEdge(top_edge, bottom_edge, left_edge,
                                  right_edge, ovr,
-                                 self.elev.grid_coordinates.x_axis,
-                                 self.elev.grid_coordinates.y_axis, self.data)
+                                 self.xcoords,
+                                 self.ycoords,
+#                                self.elev.grid_coordinates.x_axis,
+#                                self.elev.grid_coordinates.y_axis,
+                                 self.data)
             count = 1
 
             # Mask out the edges because we're just trying to resolve the
@@ -1196,11 +1280,11 @@ class DEMProcessor(object):
             self.data.mask[-1, :] = True
 
             # if 1:  # uca_init == None:
-            print "Starting uca calculation for chunk: ",
+            print("Starting uca calculation for chunk: ", end=' ')
             # %%
             for te, be in zip(top_edge, bottom_edge):
                 for le, re in zip(left_edge, right_edge):
-                    print count, "[%d:%d, %d:%d]" % (te, be, le, re),
+                    print(count, "[%d:%d, %d:%d]" % (te, be, le, re), end=' ')
                     count += 1
                     area, e2doi, edone, e2doi_no_mask, e2o_no_mask = \
                         self._calc_uca_chunk(self.data[te:be, le:re],
@@ -1233,7 +1317,7 @@ class DEMProcessor(object):
                     tile_edge.set_sides((te, be, le, re), e2doi, 'todo',
                                         local=True)
             # %%
-            print '..Done'
+            print('..Done')
             # This needs to be much more sophisticated because we have to
             # follow the tile's edge value through the interior.
             # Since we have to do that anyway, we might as well recompute
@@ -1279,12 +1363,12 @@ class DEMProcessor(object):
             i = tile_edge.find_best_candidate()
             tile_edge.fix_shapes()
 #            dbug = np.zeros_like(self.uca)
-            print "Starting edge resolution round: ",
+            print("Starting edge resolution round: ", end=' ')
             count = 0
             i_old = -1
             while i is not None and i != i_old:
                 count += 1
-                print count, '(%d) .' % i,
+                print(count, '(%d) .' % i, end=' ')
                 # %%
                 te, be, le, re = tile_edge.coords[i]
                 data, dX, dY, direction, mag, flats = \
@@ -1335,7 +1419,7 @@ class DEMProcessor(object):
             self.tile_edge = tile_edge
             self.edge_todo = edge_todo_tile
             self.edge_done = ~edge_not_done_tile
-        print '..Done'
+        print('..Done')
 
         # Fix the very last pixel on the edges
         self.fix_edge_pixels(edge_init_data, edge_init_done, edge_init_todo)
@@ -1494,7 +1578,7 @@ class DEMProcessor(object):
             # references.
             while (ids - ids_old).sum() > 0:
                 # %%
-                print "x",
+                print("x", end=' ')
                 ids_old = ids.copy()
                 ids_todo = ids_i[ids.ravel()]
                 ids[:] = False
@@ -1536,7 +1620,7 @@ class DEMProcessor(object):
             # circular references.
             while (ids - ids_old).sum() > 0:
                 # %%
-                print "o",
+                print("o", end=' ')
                 ids_old = ids.copy()
                 done.ravel()[ids] = True
                 ids_todo = ids_i[ids.ravel()]
@@ -1613,7 +1697,7 @@ class DEMProcessor(object):
             # circular references.
             while (ids - ids_old).sum() > 0:
                 # %%
-                print "x",
+                print("x", end=' ')
                 ids_old = ids.copy()
 #                edge_todo_old = arr.copy()
                 ids_todo = ids_i[ids.ravel()]
@@ -1640,6 +1724,25 @@ class DEMProcessor(object):
         edge_done = ~edge_todo
 
         return area, edge_todo_i, edge_done, edge_todo_tile
+
+
+    def _calc_connectivity_chunk(self, data, dX, dY, direction, mag, flats,
+                        area_edges, plotflag=False, edge_todo_i_no_mask=True):
+        """
+        Calculates the upstream contributing area for the interior, and
+        includes edge contributions if they are provided through area_edges.
+        """
+        # %%
+        # Figure out which section the drainage goes towards, and what
+        # proportion goes to the straight-sided (as opposed to diagonal) node.
+        section, proportion = self._calc_uca_section_proportion(
+            data, dX, dY, direction, flats)
+
+        # Build the drainage or adjacency matrix
+        A = self._mk_adjacency_matrix(section, proportion, flats, data, mag, dX, dY)
+
+        return A
+
 
     def _calc_uca_chunk(self, data, dX, dY, direction, mag, flats,
                         area_edges, plotflag=False, edge_todo_i_no_mask=True):
@@ -1712,7 +1815,7 @@ class DEMProcessor(object):
         data_ = data.ravel()
 
         while (np.any(~done) and count < self.circular_ref_maxcount):
-            print ".",
+            print(".", end=' ')
             count += 1
             if CYTHON:
                 area_, done_, edge_todo_, edge_todo_no_mask_ = cyutils.drain_area(area_,
@@ -1723,7 +1826,7 @@ class DEMProcessor(object):
             else:
                 # If I use ids.sum() > 0 then I might get stuck in
                 # circular references.
-                while (ids - ids_old).sum() > 0:
+                while (ids ^ ids_old).sum() > 0:
                     # %%
                     ids_old = ids.copy()
                     ids, area, done, edge_todo = \
@@ -2123,7 +2226,7 @@ class DEMProcessor(object):
         edges = np.zeros_like(flats)
         # %% Calcute the flat drainage
         warn_flats = []
-        for ii in xrange(n_flats):
+        for ii in list(range(n_flats)):
             ids_flats = flat_ids[flat_coords[ii]:flat_coords[ii+1]]
             edges[:] = 0
             j = ids_flats % mm
@@ -2415,7 +2518,7 @@ def _tarboton_slopes_directions(data, dX, dY, facets, ang_adj):
     mag = np.full(data.shape, FLAT_ID_INT, 'float64')
 
     slc0 = [slice(1, -1), slice(1, -1)]
-    for ind in xrange(8):
+    for ind in list(range(8)):
 
         e1 = facets[ind][1]
         e2 = facets[ind][2]
@@ -2562,14 +2665,14 @@ def _get_d1_d2(dX, dY, ind, e1, e2, shp, topbot=None):
     """
     if topbot == None:
         if ind in [0, 3, 4, 7]:
-            d1 = dX[slice((e2[0] + 1) / 2, shp[0] + (e2[0] - 1) / 2)]
-            d2 = dY[slice((e2[0] + 1) / 2, shp[0] + (e2[0] - 1) / 2)]
+            d1 = dX[slice((e2[0] + 1) // 2, shp[0] + (e2[0] - 1) // 2)]
+            d2 = dY[slice((e2[0] + 1) // 2, shp[0] + (e2[0] - 1) // 2)]
             if d1.size == 0:
                 d1 = np.array([dX[0]])
                 d2 = np.array([dY[0]])
         else:
-            d2 = dX[slice((e1[0] + 1) / 2, shp[0] + (e1[0] - 1) / 2)]
-            d1 = dY[slice((e1[0] + 1) / 2, shp[0] + (e1[0] - 1) / 2)]
+            d2 = dX[slice((e1[0] + 1) // 2, shp[0] + (e1[0] - 1) // 2)]
+            d1 = dY[slice((e1[0] + 1) // 2, shp[0] + (e1[0] - 1) // 2)]
             if d1.size == 0:
                 d2 = dX[0]
                 d1 = dY[0]
@@ -2630,10 +2733,10 @@ def _calc_direction(data, mag, direction, ang, d1, d2, theta,
     I3 = b_s1_lte0 & (b_s2_lte0 | (b_s2_gt0 & (sd <= 0)))  # upslope or flat
     rad2[I3] = -1
 
-    I4 = rad2 > mag[slc0]
+    I4 = rad2 > mag[tuple(slc0)]
     if I4.any():
-        mag[slc0][I4] = rad2[I4]
-        direction[slc0][I4] = r[I4] * ang[1] + ang[0] * np.pi/2
+        mag[tuple(slc0)][I4] = rad2[I4]
+        direction[tuple(slc0)][I4] = r[I4] * ang[1] + ang[0] * np.pi/2
 
     return mag, direction
 
